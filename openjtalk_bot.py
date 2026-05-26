@@ -8,13 +8,12 @@ import wave
 from pathlib import Path
 from typing import Optional
 
+import random
 import discord
-import enka
 import numpy as np
 import pyopenjtalk
 from discord import app_commands
 from discord.ext import commands
-from PIL import Image, ImageDraw, ImageFont
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import aiohttp
@@ -27,44 +26,6 @@ SAMPLE_RATE = 48000
 active_channels: dict = {}
 read_queues: dict = {}
 user_dict: dict = {}
-
-STAT_NAMES = {
-    "FIGHT_PROP_HP": "HP",
-    "FIGHT_PROP_HP_PERCENT": "HP%",
-    "FIGHT_PROP_ATTACK": "攻撃力",
-    "FIGHT_PROP_ATTACK_PERCENT": "攻撃力%",
-    "FIGHT_PROP_DEFENSE": "防御力",
-    "FIGHT_PROP_DEFENSE_PERCENT": "防御力%",
-    "FIGHT_PROP_ELEMENT_MASTERY": "元素熟知",
-    "FIGHT_PROP_CRITICAL": "会心率",
-    "FIGHT_PROP_CRITICAL_HURT": "会心ダメージ",
-    "FIGHT_PROP_CHARGE_EFFICIENCY": "元素チャージ効率",
-    "FIGHT_PROP_HEAL_ADD": "与える治癒効果",
-    "FIGHT_PROP_FIRE_ADD_HURT": "炎元素ダメージ",
-    "FIGHT_PROP_WATER_ADD_HURT": "水元素ダメージ",
-    "FIGHT_PROP_WIND_ADD_HURT": "風元素ダメージ",
-    "FIGHT_PROP_ELEC_ADD_HURT": "雷元素ダメージ",
-    "FIGHT_PROP_ICE_ADD_HURT": "氷元素ダメージ",
-    "FIGHT_PROP_ROCK_ADD_HURT": "岩元素ダメージ",
-    "FIGHT_PROP_GRASS_ADD_HURT": "草元素ダメージ",
-    "FIGHT_PROP_PHYSICAL_ADD_HURT": "物理ダメージ",
-}
-
-PERCENT_STATS = {
-    "FIGHT_PROP_HP_PERCENT", "FIGHT_PROP_ATTACK_PERCENT", "FIGHT_PROP_DEFENSE_PERCENT",
-    "FIGHT_PROP_CRITICAL", "FIGHT_PROP_CRITICAL_HURT", "FIGHT_PROP_CHARGE_EFFICIENCY",
-    "FIGHT_PROP_HEAL_ADD", "FIGHT_PROP_FIRE_ADD_HURT", "FIGHT_PROP_WATER_ADD_HURT",
-    "FIGHT_PROP_WIND_ADD_HURT", "FIGHT_PROP_ELEC_ADD_HURT", "FIGHT_PROP_ICE_ADD_HURT",
-    "FIGHT_PROP_ROCK_ADD_HURT", "FIGHT_PROP_GRASS_ADD_HURT", "FIGHT_PROP_PHYSICAL_ADD_HURT",
-}
-
-ARTIFACT_SLOT_NAMES = {
-    "EQUIP_BRACER": "花",
-    "EQUIP_NECKLACE": "羽",
-    "EQUIP_SHOES": "砂",
-    "EQUIP_RING": "杯",
-    "EQUIP_DRESS": "冠",
-}
 
 
 def load_dict():
@@ -125,129 +86,6 @@ async def synthesize(text: str) -> Optional[bytes]:
     return await loop.run_in_executor(None, synthesize_sync, text)
 
 
-def format_stat_value(prop_id: str, value: float) -> str:
-    if prop_id in PERCENT_STATS:
-        return f"{value * 100:.1f}%"
-    return f"{int(value)}"
-
-
-async def fetch_image(session: aiohttp.ClientSession, url: str) -> Optional[Image.Image]:
-    try:
-        async with session.get(url) as resp:
-            if resp.status == 200:
-                data = await resp.read()
-                return Image.open(io.BytesIO(data)).convert("RGBA")
-    except Exception:
-        pass
-    return None
-
-
-def build_card_image(character, player, weights: dict = None, score_type: str = "攻撃換算") -> io.BytesIO:
-    if weights is None:
-        weights = SCORE_WEIGHTS["攻撃換算"]
-    W, H = 900, 540
-    card = Image.new("RGBA", (W, H), (20, 20, 30, 255))
-    draw = ImageDraw.Draw(card)
-
-    try:
-        font_large = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
-        font_mid   = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
-        font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
-    except Exception:
-        font_large = ImageFont.load_default()
-        font_mid   = font_large
-        font_small = font_large
-
-    # ヘッダー背景
-    draw.rectangle([(0, 0), (W, 70)], fill=(40, 40, 60, 255))
-
-    # キャラクター名・レベル
-    char_name = getattr(character, "name", "Unknown")
-    char_level = getattr(character, "level", "?")
-    constellation = getattr(character, "constellations_unlocked", 0)
-    draw.text((20, 10), str(char_name), font=font_large, fill=(255, 220, 100))
-    draw.text((20, 44), f"Lv.{char_level}  C{constellation}", font=font_mid, fill=(200, 200, 200))
-
-    # プレイヤー名
-    player_name = getattr(player, "nickname", "")
-    draw.text((W - 20, 10), str(player_name), font=font_small, fill=(180, 180, 180), anchor="ra")
-
-    # 武器情報
-    weapon = getattr(character, "weapon", None)
-    y = 90
-    draw.text((20, y), "── 武器 ──", font=font_mid, fill=(150, 200, 255))
-    y += 28
-    if weapon:
-        w_name  = getattr(weapon, "name", "不明")
-        w_level = getattr(weapon, "level", "?")
-        w_ref   = getattr(weapon, "refinement", 1)
-        draw.text((20, y), f"{w_name}  Lv.{w_level}  精錬{w_ref}", font=font_small, fill=(230, 230, 230))
-    y += 26
-
-    # ステータス
-    draw.text((20, y), "── ステータス ──", font=font_mid, fill=(150, 200, 255))
-    y += 28
-    stats = getattr(character, "stats", None)
-    priority_props = [
-        "FIGHT_PROP_HP", "FIGHT_PROP_ATTACK", "FIGHT_PROP_DEFENSE",
-        "FIGHT_PROP_ELEMENT_MASTERY", "FIGHT_PROP_CRITICAL", "FIGHT_PROP_CRITICAL_HURT",
-        "FIGHT_PROP_CHARGE_EFFICIENCY",
-    ]
-    col = 0
-    for prop_id in priority_props:
-        if stats is None:
-            break
-        try:
-            val = getattr(stats, prop_id.lower().replace("fight_prop_", ""), None)
-            if val is None:
-                continue
-            label = STAT_NAMES.get(prop_id, prop_id)
-            text_val = format_stat_value(prop_id, float(val))
-            x = 20 + (col % 2) * 420
-            draw.text((x, y), f"{label}: {text_val}", font=font_small, fill=(220, 220, 220))
-            if col % 2 == 1:
-                y += 20
-            col += 1
-        except Exception:
-            continue
-    if col % 2 == 1:
-        y += 20
-    y += 10
-
-    # 聖遺物
-    artifacts = getattr(character, "artifacts", [])
-    if artifacts:
-        draw.text((20, y), "── 聖遺物 ──", font=font_mid, fill=(150, 200, 255))
-        y += 28
-        total_score = 0.0
-        for art in artifacts:
-            slot_raw  = getattr(art, "equip_type", "")
-            slot_name = ARTIFACT_SLOT_NAMES.get(str(slot_raw), str(slot_raw))
-            art_name  = getattr(art, "name", "不明")
-            art_level = getattr(art, "level", "?")
-            main_stat = getattr(art, "main_stat", None)
-            main_label = ""
-            if main_stat:
-                ms_id  = str(getattr(main_stat, "prop_id", ""))
-                ms_val = getattr(main_stat, "value", 0)
-                main_label = f"[{STAT_NAMES.get(ms_id, ms_id)} {format_stat_value(ms_id, float(ms_val))}]"
-            art_score = calc_artifact_score(art, weights)
-            total_score += art_score
-            score_str = f"  スコア:{art_score:.1f}"
-            draw.text((20, y), f"{slot_name} {art_name} +{art_level} {main_label}{score_str}", font=font_small, fill=(210, 210, 210))
-            y += 18
-            if y > H - 30:
-                break
-        draw.text((20, y), f"合計スコア: {total_score:.1f}（{score_type}）", font=font_mid, fill=(255, 220, 100))
-        y += 24
-
-    # 枠線
-    draw.rectangle([(0, 0), (W - 1, H - 1)], outline=(80, 80, 120), width=2)
-
-    buf = io.BytesIO()
-    card.save(buf, format="PNG")
-    buf.seek(0)
-    return buf
 
 
 intents = discord.Intents.default()
@@ -293,6 +131,42 @@ async def on_ready():
     load_dict()
     await tree.sync()
     print(f"Logged in as {bot.user}")
+
+
+@bot.event
+async def on_voice_state_update(member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+    if member.bot:
+        return
+
+    guild = member.guild
+    vc = guild.voice_client
+    if vc is None or not vc.is_connected():
+        return
+
+    bot_channel = vc.channel
+
+    # 入室
+    if after.channel is not None and after.channel == bot_channel and before.channel != bot_channel:
+        if guild.id in read_queues:
+            await read_queues[guild.id].put(f"{member.display_name}が入室しました")
+
+    # 退室
+    if before.channel is not None and before.channel == bot_channel and after.channel != bot_channel:
+        if guild.id in read_queues:
+            await read_queues[guild.id].put(f"{member.display_name}が退室しました")
+
+        # Bot以外が誰もいなくなったら自動切断
+        human_members = [m for m in bot_channel.members if not m.bot]
+        if len(human_members) == 0:
+            active_channels.pop(guild.id, None)
+            if guild.id in read_queues:
+                while not read_queues[guild.id].empty():
+                    try:
+                        read_queues[guild.id].get_nowait()
+                        read_queues[guild.id].task_done()
+                    except asyncio.QueueEmpty:
+                        break
+            await vc.disconnect()
 
 
 @bot.event
@@ -428,64 +302,49 @@ async def test_read(interaction: discord.Interaction, text: str):
         await read_queues[guild.id].put(apply_dict(text))
 
 
-SCORE_TYPES = ["攻撃換算", "HP換算", "防御換算", "熟知換算"]
-
-SCORE_WEIGHTS = {
-    "攻撃換算": {
-        "FIGHT_PROP_ATTACK_PERCENT":    1.0,
-        "FIGHT_PROP_CHARGE_EFFICIENCY": 0.5,
-        "FIGHT_PROP_ELEMENT_MASTERY":   0.25,
-    },
-    "HP換算": {
-        "FIGHT_PROP_HP_PERCENT":        1.0,
-        "FIGHT_PROP_CHARGE_EFFICIENCY": 0.5,
-        "FIGHT_PROP_ELEMENT_MASTERY":   0.25,
-    },
-    "防御換算": {
-        "FIGHT_PROP_DEFENSE_PERCENT":   1.0,
-        "FIGHT_PROP_CHARGE_EFFICIENCY": 0.5,
-        "FIGHT_PROP_ELEMENT_MASTERY":   0.25,
-    },
-    "熟知換算": {
-        "FIGHT_PROP_ELEMENT_MASTERY":   1.0,
-        "FIGHT_PROP_ATTACK_PERCENT":    0.5,
-        "FIGHT_PROP_CHARGE_EFFICIENCY": 0.3,
-    },
-}
-
-SCORE_BASE = {
-    "FIGHT_PROP_ATTACK_PERCENT":    0.049,
-    "FIGHT_PROP_HP_PERCENT":        0.049,
-    "FIGHT_PROP_DEFENSE_PERCENT":   0.062,
-    "FIGHT_PROP_CHARGE_EFFICIENCY": 0.055,
-    "FIGHT_PROP_ELEMENT_MASTERY":   19.75,
-}
-
-# サブステ1個分の基準値（等価換算の分母）
-SCORE_BASE = {
-    "FIGHT_PROP_CRITICAL":            0.033,
-    "FIGHT_PROP_CRITICAL_HURT":       0.066,
-    "FIGHT_PROP_ATTACK_PERCENT":      0.049,
-    "FIGHT_PROP_HP_PERCENT":          0.049,
-    "FIGHT_PROP_DEFENSE_PERCENT":     0.062,
-    "FIGHT_PROP_CHARGE_EFFICIENCY":   0.055,
-    "FIGHT_PROP_ELEMENT_MASTERY":     19.75,
-}
 
 
-def calc_artifact_score(artifact, weights: dict) -> float:
-    score = 0.0
-    sub_stats = getattr(artifact, "sub_stats", [])
-    for sub in sub_stats:
-        prop_id = str(getattr(sub, "prop_id", ""))
-        value   = float(getattr(sub, "value", 0))
-        w = weights.get(prop_id, 0)
-        base = SCORE_BASE.get(prop_id, 1)
-        score += (value / base) * w
-    return score
+OMIKUJI_BASE_URL = os.getenv("OMIKUJI_BASE_URL", "")
+OMIKUJI_FILE = Path("omikuji.json")
 
 
+def load_omikuji() -> list:
+    if OMIKUJI_FILE.exists():
+        with open(OMIKUJI_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    return []
 
+
+@tree.command(name="おみくじ", description="おみくじを引きます")
+async def omikuji(interaction: discord.Interaction):
+    items = load_omikuji()
+    if not items or not OMIKUJI_BASE_URL:
+        await interaction.response.send_message(
+            "おみくじの設定がされていません。`omikuji.json` と環境変数 `OMIKUJI_BASE_URL` を確認してください。",
+            ephemeral=True
+        )
+        return
+
+    chosen = random.choice(items)
+    filename = chosen.get("filename", "")
+    caption = chosen.get("caption", "")
+    image_url = f"{OMIKUJI_BASE_URL}/{filename}"
+
+    await interaction.response.defer()
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(image_url) as resp:
+                if resp.status == 200:
+                    data = await resp.read()
+                    file = discord.File(io.BytesIO(data), filename=filename)
+                    await interaction.followup.send(content=caption if caption else None, file=file)
+                    return
+                else:
+                    await interaction.followup.send(f"画像の取得に失敗しました（HTTP {resp.status}）")
+        except Exception as e:
+            print(f"[おみくじ] 画像取得失敗: {e}")
+            await interaction.followup.send("画像の取得中にエラーが発生しました。")
 
 
 class HealthHandler(BaseHTTPRequestHandler):
