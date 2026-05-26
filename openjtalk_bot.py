@@ -485,66 +485,7 @@ def calc_artifact_score(artifact, weights: dict) -> float:
     return score
 
 
-@tree.command(name="ビルドカード作成", description="原神のビルドカードを生成します")
-@app_commands.describe(
-    uid="原神のUID（例: 901211014）",
-    スコア換算="聖遺物スコアの換算基準（省略時: 会心特化）",
-    キャラクター番号="ショーケースの順番（0始まり、省略時: 0）",
-)
-@app_commands.choices(スコア換算=[
-    app_commands.Choice(name=s, value=s) for s in SCORE_TYPES
-])
-async def build_card(
-    interaction: discord.Interaction,
-    uid: str,
-    スコア換算: str = "攻撃換算",
-    キャラクター番号: int = 0,
-):
-    await interaction.response.defer()
 
-    try:
-        async with enka.GenshinClient(enka.gi.Language.JAPANESE) as client:
-            response = await client.fetch_showcase(int(uid))
-    except enka.errors.PlayerDoesNotExistError:
-        await interaction.followup.send(f"UID `{uid}` のプレイヤーが見つかりませんでした。")
-        return
-    except enka.errors.GameMaintenanceError:
-        await interaction.followup.send("現在ゲームがメンテナンス中です。しばらくしてから再試行してください。")
-        return
-    except Exception as e:
-        await interaction.followup.send(f"データ取得に失敗しました: `{e}`")
-        return
-
-    characters = response.characters
-    if not characters:
-        await interaction.followup.send("ショーケースにキャラクターが登録されていません。\nゲーム内でキャラクターをショーケースに設定してください。")
-        return
-
-    idx = キャラクター番号
-    if idx < 0 or idx >= len(characters):
-        await interaction.followup.send(f"キャラクター番号が範囲外です。0〜{len(characters)-1} で指定してください。")
-        return
-
-    character = characters[idx]
-    player    = response.player
-    weights   = SCORE_WEIGHTS.get(スコア換算, SCORE_WEIGHTS["攻撃換算"])
-
-    try:
-        loop = asyncio.get_event_loop()
-        card_buf = await loop.run_in_executor(
-            None, build_card_image, character, player, weights, スコア換算
-        )
-    except Exception as e:
-        await interaction.followup.send(f"カード生成に失敗しました: `{e}`")
-        return
-
-    char_name   = getattr(character, "name", "キャラクター")
-    player_name = getattr(player, "nickname", uid)
-    file = discord.File(card_buf, filename="build_card.png")
-    await interaction.followup.send(
-        content=f"🎴 **{player_name}** さんの **{char_name}** のビルドカード（{スコア換算}）",
-        file=file,
-    )
 
 
 class HealthHandler(BaseHTTPRequestHandler):
