@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y \
     ffmpeg \
@@ -9,9 +9,8 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
 
-COPY openjtalk_bot.py .
+RUN pip install --no-cache-dir -r requirements.txt
 
 CMD ["python", "openjtalk_bot.py"]
