@@ -16,6 +16,7 @@ from discord import app_commands
 from discord.ext import commands
 from PIL import Image, ImageDraw, ImageFont
 import aiohttp
+import Pillow
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "YOUR_DISCORD_TOKEN_HERE")
 DICT_FILE = Path("openjtalk_dict.json")
