@@ -2,3 +2,4 @@ discord.py[voice]
 pyopenjtalk
 numpy
 aiofiles
+python-dotenv
