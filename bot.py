@@ -268,6 +268,20 @@ async def test_read(interaction: discord.Interaction, text: str):
     if guild.id in read_queues:
         await read_queues[guild.id].put(apply_dict(text))
 
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"ok")
+    def log_message(self, *args):
+        pass
+
+def run_web():
+    HTTPServer(("0.0.0.0", 8080), HealthHandler).serve_forever()
 
 if __name__ == "__main__":
+    threading.Thread(target=run_web, daemon=True).start()
     bot.run(DISCORD_TOKEN)
