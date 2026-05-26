@@ -1,9 +1,0 @@
-services:
-  - type: worker
-    name: openjtalk-bot
-    runtime: python
-    buildCommand: apt-get install -y ffmpeg && pip install -r requirements.txt
-    startCommand: python openjtalk_bot.py
-    envVars:
-      - key: DISCORD_TOKEN
-        sync: false
