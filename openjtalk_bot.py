@@ -309,7 +309,7 @@ ROBAKUJI_FILE = Path("robakuji.json")
 
 
 def load_robakuji() -> list:
-    if ROBAJI_FILE.exists():
+    if ROBAKUJI_FILE.exists():
         with open(ROBAKUJI_FILE, encoding="utf-8") as f:
             return json.load(f)
     return []
