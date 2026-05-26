@@ -12,6 +12,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY bot.py .
+COPY openjtalk_bot.py .
 
 CMD ["python", "openjtalk_bot.py"]
