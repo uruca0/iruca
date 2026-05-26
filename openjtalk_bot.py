@@ -304,23 +304,23 @@ async def test_read(interaction: discord.Interaction, text: str):
 
 
 
-OMIKUJI_BASE_URL = os.getenv("OMIKUJI_BASE_URL", "")
-OMIKUJI_FILE = Path("omikuji.json")
+ROBAKUJI_BASE_URL = os.getenv("ROBAKUJI_BASE_URL", "")
+ROBAKUJI_FILE = Path("robakuji.json")
 
 
-def load_omikuji() -> list:
-    if OMIKUJI_FILE.exists():
-        with open(OMIKUJI_FILE, encoding="utf-8") as f:
+def load_robakuji() -> list:
+    if ROBAJI_FILE.exists():
+        with open(ROBAKUJI_FILE, encoding="utf-8") as f:
             return json.load(f)
     return []
 
 
-@tree.command(name="おみくじ", description="おみくじを引きます")
-async def omikuji(interaction: discord.Interaction):
-    items = load_omikuji()
-    if not items or not OMIKUJI_BASE_URL:
+@tree.command(name="ろばくじ", description="ろばくじを引きます")
+async def robakuji(interaction: discord.Interaction):
+    items = load_robakuji()
+    if not items or not ROBAKUJI_BASE_URL:
         await interaction.response.send_message(
-            "おみくじの設定がされていません。`omikuji.json` と環境変数 `OMIKUJI_BASE_URL` を確認してください。",
+            "ろばくじの設定がされていません。`robakuji.json` と環境変数 `ROBAKUJI_BASE_URL` を確認してください。",
             ephemeral=True
         )
         return
@@ -328,7 +328,7 @@ async def omikuji(interaction: discord.Interaction):
     chosen = random.choice(items)
     filename = chosen.get("filename", "")
     caption = chosen.get("caption", "")
-    image_url = f"{OMIKUJI_BASE_URL}/{filename}"
+    image_url = f"{ROBAKUJI_BASE_URL}/{filename}"
 
     await interaction.response.defer()
 
@@ -343,8 +343,17 @@ async def omikuji(interaction: discord.Interaction):
                 else:
                     await interaction.followup.send(f"画像の取得に失敗しました（HTTP {resp.status}）")
         except Exception as e:
-            print(f"[おみくじ] 画像取得失敗: {e}")
+            print(f"[ろばくじ] 画像取得失敗: {e}")
             await interaction.followup.send("画像の取得中にエラーが発生しました。")
+
+
+@tree.command(name="アイコン", description="コマンドを入力した人のアイコン画像を表示します")
+async def show_icon(interaction: discord.Interaction):
+    user = interaction.user
+    icon_url = user.display_avatar.url
+    embed = discord.Embed(title=f"{user.display_name} のアイコン")
+    embed.set_image(url=icon_url)
+    await interaction.response.send_message(embed=embed)
 
 
 class HealthHandler(BaseHTTPRequestHandler):
