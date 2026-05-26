@@ -13,8 +13,9 @@ import numpy as np
 import pyopenjtalk
 from discord import app_commands
 from discord.ext import commands
+from dotenv import load_dotenv
 
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "MTEwNzY1MTg2MzY0NzYzNzUxNA.GhiVry.bOr1IiqS_MaF4IGLPPxncntNkCl70Wu-X_e5l8")
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "DISCORD_BOT_TOKEN")
 DICT_FILE = Path("openjtalk_dict.json")
 IGNORE_PREFIXES = ("!", "/", ".", "?")
 SAMPLE_RATE = 48000
