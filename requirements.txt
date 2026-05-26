@@ -4,3 +4,4 @@ numpy
 aiofiles
 python-dotenv
 enka
+pillow
