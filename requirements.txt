@@ -3,6 +3,6 @@ pyopenjtalk
 numpy
 aiofiles
 python-dotenv
-enka
-pillow
 aiohttp
+enka
+Pillow
