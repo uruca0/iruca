@@ -3,3 +3,4 @@ pyopenjtalk
 numpy
 aiofiles
 python-dotenv
+enka
