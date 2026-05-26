@@ -9,13 +9,15 @@ from pathlib import Path
 from typing import Optional
 
 import discord
+import enka
 import numpy as np
 import pyopenjtalk
 from discord import app_commands
 from discord.ext import commands
-from dotenv import load_dotenv
+from PIL import Image, ImageDraw, ImageFont
+import aiohttp
 
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "DISCORD_BOT_TOKEN")
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "YOUR_DISCORD_TOKEN_HERE")
 DICT_FILE = Path("openjtalk_dict.json")
 IGNORE_PREFIXES = ("!", "/", ".", "?")
 SAMPLE_RATE = 48000
@@ -23,6 +25,44 @@ SAMPLE_RATE = 48000
 active_channels: dict = {}
 read_queues: dict = {}
 user_dict: dict = {}
+
+STAT_NAMES = {
+    "FIGHT_PROP_HP": "HP",
+    "FIGHT_PROP_HP_PERCENT": "HP%",
+    "FIGHT_PROP_ATTACK": "攻撃力",
+    "FIGHT_PROP_ATTACK_PERCENT": "攻撃力%",
+    "FIGHT_PROP_DEFENSE": "防御力",
+    "FIGHT_PROP_DEFENSE_PERCENT": "防御力%",
+    "FIGHT_PROP_ELEMENT_MASTERY": "元素熟知",
+    "FIGHT_PROP_CRITICAL": "会心率",
+    "FIGHT_PROP_CRITICAL_HURT": "会心ダメージ",
+    "FIGHT_PROP_CHARGE_EFFICIENCY": "元素チャージ効率",
+    "FIGHT_PROP_HEAL_ADD": "与える治癒効果",
+    "FIGHT_PROP_FIRE_ADD_HURT": "炎元素ダメージ",
+    "FIGHT_PROP_WATER_ADD_HURT": "水元素ダメージ",
+    "FIGHT_PROP_WIND_ADD_HURT": "風元素ダメージ",
+    "FIGHT_PROP_ELEC_ADD_HURT": "雷元素ダメージ",
+    "FIGHT_PROP_ICE_ADD_HURT": "氷元素ダメージ",
+    "FIGHT_PROP_ROCK_ADD_HURT": "岩元素ダメージ",
+    "FIGHT_PROP_GRASS_ADD_HURT": "草元素ダメージ",
+    "FIGHT_PROP_PHYSICAL_ADD_HURT": "物理ダメージ",
+}
+
+PERCENT_STATS = {
+    "FIGHT_PROP_HP_PERCENT", "FIGHT_PROP_ATTACK_PERCENT", "FIGHT_PROP_DEFENSE_PERCENT",
+    "FIGHT_PROP_CRITICAL", "FIGHT_PROP_CRITICAL_HURT", "FIGHT_PROP_CHARGE_EFFICIENCY",
+    "FIGHT_PROP_HEAL_ADD", "FIGHT_PROP_FIRE_ADD_HURT", "FIGHT_PROP_WATER_ADD_HURT",
+    "FIGHT_PROP_WIND_ADD_HURT", "FIGHT_PROP_ELEC_ADD_HURT", "FIGHT_PROP_ICE_ADD_HURT",
+    "FIGHT_PROP_ROCK_ADD_HURT", "FIGHT_PROP_GRASS_ADD_HURT", "FIGHT_PROP_PHYSICAL_ADD_HURT",
+}
+
+ARTIFACT_SLOT_NAMES = {
+    "EQUIP_BRACER": "花",
+    "EQUIP_NECKLACE": "羽",
+    "EQUIP_SHOES": "砂",
+    "EQUIP_RING": "杯",
+    "EQUIP_DRESS": "冠",
+}
 
 
 def load_dict():
@@ -56,21 +96,12 @@ def soft_limit(x: np.ndarray, threshold: float = 0.8) -> np.ndarray:
 def synthesize_sync(text: str) -> Optional[bytes]:
     try:
         wave_data, sr = pyopenjtalk.tts(text)
-
-        # float64 [-1.0, 1.0] に正規化
         peak = np.max(np.abs(wave_data))
         if peak > 0:
             wave_data = wave_data / peak
-
-        # ソフトリミッター（閾値0.8でなめらかに圧縮）
         wave_data = soft_limit(wave_data, threshold=0.8)
-
-        # 音量を0.85倍に抑えてヘッドルームを確保
         wave_data = wave_data * 0.85
-
-        # float → int16
         wave_int16 = (wave_data * 32767).clip(-32768, 32767).astype(np.int16)
-
         if sr != SAMPLE_RATE:
             new_length = int(len(wave_int16) * SAMPLE_RATE / sr)
             indices = np.linspace(0, len(wave_int16) - 1, new_length)
@@ -90,6 +121,131 @@ def synthesize_sync(text: str) -> Optional[bytes]:
 async def synthesize(text: str) -> Optional[bytes]:
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, synthesize_sync, text)
+
+
+def format_stat_value(prop_id: str, value: float) -> str:
+    if prop_id in PERCENT_STATS:
+        return f"{value * 100:.1f}%"
+    return f"{int(value)}"
+
+
+async def fetch_image(session: aiohttp.ClientSession, url: str) -> Optional[Image.Image]:
+    try:
+        async with session.get(url) as resp:
+            if resp.status == 200:
+                data = await resp.read()
+                return Image.open(io.BytesIO(data)).convert("RGBA")
+    except Exception:
+        pass
+    return None
+
+
+def build_card_image(character, player, weights: dict = None, score_type: str = "攻撃換算") -> io.BytesIO:
+    if weights is None:
+        weights = SCORE_WEIGHTS["攻撃換算"]
+    W, H = 900, 540
+    card = Image.new("RGBA", (W, H), (20, 20, 30, 255))
+    draw = ImageDraw.Draw(card)
+
+    try:
+        font_large = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
+        font_mid   = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
+        font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
+    except Exception:
+        font_large = ImageFont.load_default()
+        font_mid   = font_large
+        font_small = font_large
+
+    # ヘッダー背景
+    draw.rectangle([(0, 0), (W, 70)], fill=(40, 40, 60, 255))
+
+    # キャラクター名・レベル
+    char_name = getattr(character, "name", "Unknown")
+    char_level = getattr(character, "level", "?")
+    constellation = getattr(character, "constellations_unlocked", 0)
+    draw.text((20, 10), str(char_name), font=font_large, fill=(255, 220, 100))
+    draw.text((20, 44), f"Lv.{char_level}  C{constellation}", font=font_mid, fill=(200, 200, 200))
+
+    # プレイヤー名
+    player_name = getattr(player, "nickname", "")
+    draw.text((W - 20, 10), str(player_name), font=font_small, fill=(180, 180, 180), anchor="ra")
+
+    # 武器情報
+    weapon = getattr(character, "weapon", None)
+    y = 90
+    draw.text((20, y), "── 武器 ──", font=font_mid, fill=(150, 200, 255))
+    y += 28
+    if weapon:
+        w_name  = getattr(weapon, "name", "不明")
+        w_level = getattr(weapon, "level", "?")
+        w_ref   = getattr(weapon, "refinement", 1)
+        draw.text((20, y), f"{w_name}  Lv.{w_level}  精錬{w_ref}", font=font_small, fill=(230, 230, 230))
+    y += 26
+
+    # ステータス
+    draw.text((20, y), "── ステータス ──", font=font_mid, fill=(150, 200, 255))
+    y += 28
+    stats = getattr(character, "stats", None)
+    priority_props = [
+        "FIGHT_PROP_HP", "FIGHT_PROP_ATTACK", "FIGHT_PROP_DEFENSE",
+        "FIGHT_PROP_ELEMENT_MASTERY", "FIGHT_PROP_CRITICAL", "FIGHT_PROP_CRITICAL_HURT",
+        "FIGHT_PROP_CHARGE_EFFICIENCY",
+    ]
+    col = 0
+    for prop_id in priority_props:
+        if stats is None:
+            break
+        try:
+            val = getattr(stats, prop_id.lower().replace("fight_prop_", ""), None)
+            if val is None:
+                continue
+            label = STAT_NAMES.get(prop_id, prop_id)
+            text_val = format_stat_value(prop_id, float(val))
+            x = 20 + (col % 2) * 420
+            draw.text((x, y), f"{label}: {text_val}", font=font_small, fill=(220, 220, 220))
+            if col % 2 == 1:
+                y += 20
+            col += 1
+        except Exception:
+            continue
+    if col % 2 == 1:
+        y += 20
+    y += 10
+
+    # 聖遺物
+    artifacts = getattr(character, "artifacts", [])
+    if artifacts:
+        draw.text((20, y), "── 聖遺物 ──", font=font_mid, fill=(150, 200, 255))
+        y += 28
+        total_score = 0.0
+        for art in artifacts:
+            slot_raw  = getattr(art, "equip_type", "")
+            slot_name = ARTIFACT_SLOT_NAMES.get(str(slot_raw), str(slot_raw))
+            art_name  = getattr(art, "name", "不明")
+            art_level = getattr(art, "level", "?")
+            main_stat = getattr(art, "main_stat", None)
+            main_label = ""
+            if main_stat:
+                ms_id  = str(getattr(main_stat, "prop_id", ""))
+                ms_val = getattr(main_stat, "value", 0)
+                main_label = f"[{STAT_NAMES.get(ms_id, ms_id)} {format_stat_value(ms_id, float(ms_val))}]"
+            art_score = calc_artifact_score(art, weights)
+            total_score += art_score
+            score_str = f"  スコア:{art_score:.1f}"
+            draw.text((20, y), f"{slot_name} {art_name} +{art_level} {main_label}{score_str}", font=font_small, fill=(210, 210, 210))
+            y += 18
+            if y > H - 30:
+                break
+        draw.text((20, y), f"合計スコア: {total_score:.1f}（{score_type}）", font=font_mid, fill=(255, 220, 100))
+        y += 24
+
+    # 枠線
+    draw.rectangle([(0, 0), (W - 1, H - 1)], outline=(80, 80, 120), width=2)
+
+    buf = io.BytesIO()
+    card.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
 
 
 intents = discord.Intents.default()
@@ -269,20 +425,125 @@ async def test_read(interaction: discord.Interaction, text: str):
     if guild.id in read_queues:
         await read_queues[guild.id].put(apply_dict(text))
 
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
 
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"ok")
-    def log_message(self, *args):
-        pass
+SCORE_TYPES = ["攻撃換算", "HP換算", "防御換算", "熟知換算"]
 
-def run_web():
-    HTTPServer(("0.0.0.0", 8080), HealthHandler).serve_forever()
+SCORE_WEIGHTS = {
+    "攻撃換算": {
+        "FIGHT_PROP_ATTACK_PERCENT":    1.0,
+        "FIGHT_PROP_CHARGE_EFFICIENCY": 0.5,
+        "FIGHT_PROP_ELEMENT_MASTERY":   0.25,
+    },
+    "HP換算": {
+        "FIGHT_PROP_HP_PERCENT":        1.0,
+        "FIGHT_PROP_CHARGE_EFFICIENCY": 0.5,
+        "FIGHT_PROP_ELEMENT_MASTERY":   0.25,
+    },
+    "防御換算": {
+        "FIGHT_PROP_DEFENSE_PERCENT":   1.0,
+        "FIGHT_PROP_CHARGE_EFFICIENCY": 0.5,
+        "FIGHT_PROP_ELEMENT_MASTERY":   0.25,
+    },
+    "熟知換算": {
+        "FIGHT_PROP_ELEMENT_MASTERY":   1.0,
+        "FIGHT_PROP_ATTACK_PERCENT":    0.5,
+        "FIGHT_PROP_CHARGE_EFFICIENCY": 0.3,
+    },
+}
+
+SCORE_BASE = {
+    "FIGHT_PROP_ATTACK_PERCENT":    0.049,
+    "FIGHT_PROP_HP_PERCENT":        0.049,
+    "FIGHT_PROP_DEFENSE_PERCENT":   0.062,
+    "FIGHT_PROP_CHARGE_EFFICIENCY": 0.055,
+    "FIGHT_PROP_ELEMENT_MASTERY":   19.75,
+}
+
+# サブステ1個分の基準値（等価換算の分母）
+SCORE_BASE = {
+    "FIGHT_PROP_CRITICAL":            0.033,
+    "FIGHT_PROP_CRITICAL_HURT":       0.066,
+    "FIGHT_PROP_ATTACK_PERCENT":      0.049,
+    "FIGHT_PROP_HP_PERCENT":          0.049,
+    "FIGHT_PROP_DEFENSE_PERCENT":     0.062,
+    "FIGHT_PROP_CHARGE_EFFICIENCY":   0.055,
+    "FIGHT_PROP_ELEMENT_MASTERY":     19.75,
+}
+
+
+def calc_artifact_score(artifact, weights: dict) -> float:
+    score = 0.0
+    sub_stats = getattr(artifact, "sub_stats", [])
+    for sub in sub_stats:
+        prop_id = str(getattr(sub, "prop_id", ""))
+        value   = float(getattr(sub, "value", 0))
+        w = weights.get(prop_id, 0)
+        base = SCORE_BASE.get(prop_id, 1)
+        score += (value / base) * w
+    return score
+
+
+@tree.command(name="ビルドカード作成", description="原神のビルドカードを生成します")
+@app_commands.describe(
+    uid="原神のUID（例: 901211014）",
+    スコア換算="聖遺物スコアの換算基準（省略時: 会心特化）",
+    キャラクター番号="ショーケースの順番（0始まり、省略時: 0）",
+)
+@app_commands.choices(スコア換算=[
+    app_commands.Choice(name=s, value=s) for s in SCORE_TYPES
+])
+async def build_card(
+    interaction: discord.Interaction,
+    uid: str,
+    スコア換算: str = "攻撃換算",
+    キャラクター番号: int = 0,
+):
+    await interaction.response.defer()
+
+    try:
+        async with enka.GenshinClient(enka.gi.Language.JAPANESE) as client:
+            response = await client.fetch_showcase(int(uid))
+    except enka.errors.PlayerDoesNotExistError:
+        await interaction.followup.send(f"UID `{uid}` のプレイヤーが見つかりませんでした。")
+        return
+    except enka.errors.GameMaintenanceError:
+        await interaction.followup.send("現在ゲームがメンテナンス中です。しばらくしてから再試行してください。")
+        return
+    except Exception as e:
+        await interaction.followup.send(f"データ取得に失敗しました: `{e}`")
+        return
+
+    characters = response.characters
+    if not characters:
+        await interaction.followup.send("ショーケースにキャラクターが登録されていません。\nゲーム内でキャラクターをショーケースに設定してください。")
+        return
+
+    idx = キャラクター番号
+    if idx < 0 or idx >= len(characters):
+        await interaction.followup.send(f"キャラクター番号が範囲外です。0〜{len(characters)-1} で指定してください。")
+        return
+
+    character = characters[idx]
+    player    = response.player
+    weights   = SCORE_WEIGHTS.get(スコア換算, SCORE_WEIGHTS["攻撃換算"])
+
+    try:
+        loop = asyncio.get_event_loop()
+        card_buf = await loop.run_in_executor(
+            None, build_card_image, character, player, weights, スコア換算
+        )
+    except Exception as e:
+        await interaction.followup.send(f"カード生成に失敗しました: `{e}`")
+        return
+
+    char_name   = getattr(character, "name", "キャラクター")
+    player_name = getattr(player, "nickname", uid)
+    file = discord.File(card_buf, filename="build_card.png")
+    await interaction.followup.send(
+        content=f"🎴 **{player_name}** さんの **{char_name}** のビルドカード（{スコア換算}）",
+        file=file,
+    )
+
 
 if __name__ == "__main__":
-    threading.Thread(target=run_web, daemon=True).start()
     bot.run(DISCORD_TOKEN)
