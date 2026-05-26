@@ -15,6 +15,8 @@ import pyopenjtalk
 from discord import app_commands
 from discord.ext import commands
 from PIL import Image, ImageDraw, ImageFont
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import aiohttp
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "YOUR_DISCORD_TOKEN_HERE")
@@ -543,10 +545,6 @@ async def build_card(
         content=f"🎴 **{player_name}** さんの **{char_name}** のビルドカード（{スコア換算}）",
         file=file,
     )
-
-
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
 class HealthHandler(BaseHTTPRequestHandler):
